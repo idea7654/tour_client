@@ -20,6 +20,13 @@ const spot = [
 let targetSpot = null;
 let heading = null;
 
+let xrHitTestSource = null;
+let setting = false;
+let isFinish = false;
+let rayCharacter = null;
+
+const raycaster = new THREE.Raycaster();
+
 function getGPS() {
   function success(position) {
     // gps = {
@@ -58,10 +65,10 @@ function getSpotPos() {
     }
   }
 
-  spotPos = {
-    lat: targetSpot.gps.lat - gps.lat,
-    lon: targetSpot.gps.lon - gps.lon,
-  };
+  //   spotPos = {
+  //     lat: targetSpot.gps.lat - gps.lat,
+  //     lon: targetSpot.gps.lon - gps.lon,
+  //   };
 }
 
 function setCharacterPos() {}
@@ -101,31 +108,75 @@ const initScene = (gl, session) => {
   scene.add(controller);
 
   const loader = new ColladaLoader();
-  loader.load("BoxModel.dae", (collada) => {
-    BoxModel = new THREE.Object3D();
+  //   loader.load("BoxModel.dae", (collada) => {
+  //     BoxModel = new THREE.Object3D();
+  //     const box = new THREE.Box3().setFromObject(collada.scene);
+
+  //     const c = box.getCenter(new THREE.Vector3());
+  //     const size = box.getSize(new THREE.Vector3());
+
+  //     collada.scene.position.set(-c.x, size.y / 2 - c.y, -c.z);
+
+  //     BoxModel.add(collada.scene);
+
+  //     // const distance = Math.sqrt(
+  //     //   spotPos.lat * spotPos.lat + spotPos.lon * spotPos.lon
+  //     // );
+  //     const distance = 5;
+  //     BoxModel.scale.set(3, 3, 3);
+  //     // BoxModel.position
+  //     //   .set(0, -0.75 * distance, -distance)
+  //     //   .applyMatrix4(controller.matrixWorld);
+  //     // BoxModel.quaternion.setFromRotationMatrix(controller.matrixWorld);
+
+  //     const otherObject = new THREE.Object3D();
+  //     // otherObject.add(model);
+  //     otherObject.add(BoxModel);
+
+  //     // if (heading && gps) {
+  //     //   const y = Math.sin(spotPos.lon) * Math.cos(spotPos.lat);
+  //     //   const x =
+  //     //     Math.cos(gps.lat) * Math.sin(gps.lat + spotPos.lat) -
+  //     //     Math.sin(gps.lat) *
+  //     //       Math.cos(gps.lat + spotPos.lat) *
+  //     //       Math.cos(spotPos.lon);
+  //     //   const angle = (Math.atan2(y, x) * 180) / Math.PI;
+  //     //   const result = getRealAngle(heading, angle);
+
+  //     //   otherObject.rotateY(result);
+  //     //   scene.add(otherObject);
+  //     //   //BoxModel.
+  //     // }
+  //   });
+
+  loader.load("model.dae", (collada) => {
+    character = new THREE.Object3D();
     const box = new THREE.Box3().setFromObject(collada.scene);
 
     const c = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
 
     collada.scene.position.set(-c.x, size.y / 2 - c.y, -c.z);
+    character.add(collada.scene);
 
-    BoxModel.add(collada.scene);
-
-    // const distance = Math.sqrt(
-    //   spotPos.lat * spotPos.lat + spotPos.lon * spotPos.lon
-    // );
     const distance = 5;
-    BoxModel.scale.set(3, 3, 3);
-    BoxModel.position
+    character.position
       .set(0, -0.75 * distance, -distance)
       .applyMatrix4(controller.matrixWorld);
-    BoxModel.quaternion.setFromRotationMatrix(controller.matrixWorld);
+    character.quaternion.setFromRotationMatrix(controller.matrixWorld);
 
     const otherObject = new THREE.Object3D();
-    // otherObject.add(model);
-    otherObject.add(BoxModel);
+    otherObject.add(character);
 
+    const charaGPS = {
+      lat: Math.random() * 0.001 + targetSpot.gps.lat - 0.0005,
+      lon: Math.random() * 0.001 + targetSpot.gps.lon + 0.0005,
+    };
+
+    spotPos = {
+      lat: charaGPS.lat - gps.lat,
+      lon: charaGPS.lon - gps.lon,
+    };
     if (heading && gps) {
       const y = Math.sin(spotPos.lon) * Math.cos(spotPos.lat);
       const x =
@@ -136,13 +187,10 @@ const initScene = (gl, session) => {
       const angle = (Math.atan2(y, x) * 180) / Math.PI;
       const result = getRealAngle(heading, angle);
 
-      otherObject.rotateY(result);
+      character.rotateY(result);
       scene.add(otherObject);
-      //BoxModel.
     }
   });
-
-  loader.load("model.dae", (collada) => {});
 };
 
 // AR세션을 시작하는 버튼
@@ -189,11 +237,11 @@ function onButtonClicked() {
     navigator.xr
       .requestSession("immersive-ar", {
         //세션요청
-        //optionalFeatures: ['dom-overlay'], //옵션(ex: dom-overlay, hit-test 등)
-        //requiredFeatures: ['unbounded', 'hit-test'], //필수옵션
-        //domOverlay: {
-        //    root: document.getElementById('overlay')
-        //} //dom-overlay사용시 어떤 요소에 적용할 것인지 명시
+        optionalFeatures: ["dom-overlay"], //옵션(ex: dom-overlay, hit-test 등)
+        requiredFeatures: ["hit-test"], //필수옵션
+        domOverlay: {
+          root: document.getElementById("overlay"),
+        }, //dom-overlay사용시 어떤 요소에 적용할 것인지 명시
       })
       .then(onSessionStarted, onRequestSessionError);
   } else {
@@ -224,11 +272,28 @@ function onSessionStarted(session) {
   // here we ask for viewer reference space, since we will be casting a ray
   // from a viewer towards a detected surface. The results of ray and surface intersection
   session.requestReferenceSpace("viewer").then((refSpace) => {
+    //refSpace는 viewer
+    session
+      .requestHitTestSource({
+        space: refSpace,
+        offsetRay: new XRRay(), //XRRay를 지정하여 ray를 발사
+        // entityTypes: ["plane"], //hit-test의 인식타입. [mesh, plane, point]가 있으며 물체, 평면, 점을 인식한다
+      })
+      .then((hitTestSource) => {
+        xrHitTestSource = hitTestSource; //hitTestSource -> 어떤 타입을 인식할 지를 결정한 소스
+      });
+
     xrRefSpace = refSpace;
     //xrRefSpace -> viewer ReferenceSpace
     session.requestAnimationFrame(onXRFrame);
-    //onXRFrame을 호출
   });
+
+  //   session.requestReferenceSpace("viewer").then((refSpace) => {
+  //     xrRefSpace = refSpace;
+  //     //xrRefSpace -> viewer ReferenceSpace
+  //     session.requestAnimationFrame(onXRFrame);
+  //     //onXRFrame을 호출
+  //   });
 
   // three.js의 씬을 초기화
   initScene(gl, session);
@@ -245,16 +310,74 @@ function onSessionEnded(event) {
   xrButton.innerHTML = "Enter AR";
   info.innerHTML = "";
   gl = null;
+  if (xrHitTestSource) xrHitTestSource.cancel(); //hitTestSource를 취소하여 더이상 트래킹을 하지 않음
+  xrHitTestSource = null;
 }
 
 function updateAnimation() {
   //threeJs의 오브젝트들의 애니메이션을 넣는 곳
+  //   if (!isFinish) {
+  // let intersects = raycaster.intersectObjects(scene.children);
+  // if (intersects) {
+  //   const a = document.getElementById("compass");
+  //   a.innerHTML = "작동은합니다";
+  //   rayCharacter = intersects[0];
+  // } else {
+  //   rayCharacter = null;
+  // }
+  //   }
 }
 
 function onXRFrame(t, frame) {
   let session = frame.session; //매 프레임의 session
   let xrViewerPose = frame.getViewerPose(xrRefSpace); //xrViewerPose
   session.requestAnimationFrame(onXRFrame); //onXRFrame을 반복 호출
+
+  if (xrHitTestSource && xrViewerPose && BoxModel && targetSpot && !setting) {
+    //AR view의 기기 화면 중앙에서 Ray를 발사하여 hit-test결과를 얻는다.
+    //결과는 Ray가 하나 이상의 감지된 표면과 교차했음을 나타낸다.
+    const hitTestResults = frame.getHitTestResults(xrHitTestSource);
+    if (hitTestResults.length) {
+      //교차점의 로컬좌표를 얻어옴
+      const pose = hitTestResults[0].getPose(xrRefSpace);
+      //교차점에 reticle오브젝트 설치
+      BoxModel.matrix.fromArray(pose.transform.matrix);
+      scene.add(BoxModel);
+
+      const a = document.getElementById("compass");
+      a.innerHTML = "작동은합니다";
+
+      //   document.getElementById("overlay").addEventListener(
+      //     "touchstart",
+      //     (e) => {
+      //       const tempMatrix = new THREE.Matrix4();
+      //       tempMatrix.identity().extractRotation(controller.matrixWorld);
+      //       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+      //       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+      //       let intersects = raycaster.intersectObjects(scene.children);
+      //       if (intersects) {
+      //         rayCharacter = intersects[0];
+      //       } else {
+      //         rayCharacter = null;
+      //       }
+      //     },
+      //     false
+      //   );
+
+      //   document.getElementById("overlay").addEventListener(
+      //     "touchmove",
+      //     (e) => {
+      //       if (rayCharacter) {
+      //       }
+      //     },
+      //     false
+      //   );
+    }
+    setting = true;
+  } else {
+    //교차가 없으면 보이지 않음
+  }
 
   updateAnimation();
   //WebXr로 생성된 gl 컨텍스트를 threeJs 렌더러에 바인딩
@@ -274,20 +397,6 @@ const handleOrientation = (event) => {
   } else {
     heading = 360 - event.alpha;
   }
-
-  //   if (heading && gps) {
-  //     const y = Math.sin(spotPos.lon) * Math.cos(spotPos.lat);
-  //     const x =
-  //       Math.cos(gps.lat) * Math.sin(gps.lat + spotPos.lat) -
-  //       Math.sin(gps.lat) *
-  //         Math.cos(gps.lat + spotPos.lat) *
-  //         Math.cos(spotPos.lon);
-  //     const angle = (Math.atan2(y, x) * 180) / Math.PI;
-  //     const result = getRealAngle(heading, angle);
-  //     a.innerHTML = `CompassDegree: ${Math.ceil(
-  //       heading
-  //     )}, 계산한 각도: ${result}, angle: ${angle}`;
-  //   }
 };
 window.addEventListener("deviceorientationabsolute", handleOrientation, false);
 
@@ -307,4 +416,22 @@ function getRealAngle(heading, angle) {
   }
 
   return realAngle;
+}
+
+{
+  const loader = new ColladaLoader();
+  loader.load("BoxModel.dae", (collada) => {
+    BoxModel = new THREE.Object3D();
+    const box = new THREE.Box3().setFromObject(collada.scene);
+
+    const c = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+
+    collada.scene.position.set(-c.x, size.y / 2 - c.y, -c.z);
+
+    BoxModel.add(collada.scene);
+
+    const a = document.getElementById("compass");
+    a.innerHTML = "준비완료!";
+  });
 }
